@@ -1,10 +1,13 @@
-﻿using Capstone.Models;
+﻿using System.Collections.Generic;
+using Capstone.Models;
 
 namespace Capstone.DAO
 {
     public interface IUserDao
     {
-        User GetUser(string username);
-        User AddUser(string username, string password, string role);
+        IList<User> GetUsers();
+        User GetUserById(int id);
+        User GetUserByUsername(string username);
+        User CreateUser(string username, string password, string role);
     }
 }

@@ -1,5 +1,6 @@
 ﻿using Microsoft.AspNetCore.Mvc;
 using Capstone.DAO;
+using Capstone.Exceptions;
 using Capstone.Models;
 using Capstone.Security;
 
@@ -13,21 +14,30 @@ namespace Capstone.Controllers
         private readonly IPasswordHasher passwordHasher;
         private readonly IUserDao userDao;
 
-        public LoginController(ITokenGenerator _tokenGenerator, IPasswordHasher _passwordHasher, IUserDao _userDao)
+        public LoginController(ITokenGenerator tokenGenerator, IPasswordHasher passwordHasher, IUserDao userDao)
         {
-            tokenGenerator = _tokenGenerator;
-            passwordHasher = _passwordHasher;
-            userDao = _userDao;
+            this.tokenGenerator = tokenGenerator;
+            this.passwordHasher = passwordHasher;
+            this.userDao = userDao;
         }
 
         [HttpPost]
         public IActionResult Authenticate(LoginUser userParam)
         {
             // Default to bad username/password message
-            IActionResult result = Unauthorized(new { message = "Username or password is incorrect" });
+            IActionResult result = Unauthorized(new { message = "Username or password is incorrect." });
 
+            User user;
             // Get the user by username
-            User user = userDao.GetUser(userParam.Username);
+            try
+            { 
+                user = userDao.GetUserByUsername(userParam.Username);
+            }
+            catch (DaoException)
+            {
+                // return default Unauthorized message instead of indicating a specific error
+                return result;
+            }
 
             // If we found a user and the password hash matches
             if (user != null && passwordHasher.VerifyHashMatch(user.PasswordHash, userParam.Password, user.Salt))
@@ -36,8 +46,7 @@ namespace Capstone.Controllers
                 string token = tokenGenerator.GenerateToken(user.UserId, user.Username, user.Role);
 
                 // Create a ReturnUser object to return to the client
-                
-               LoginResponse retUser = new LoginResponse() { User = user, Token = token };
+                LoginResponse retUser = new LoginResponse() { User = new ReturnUser() { UserId = user.UserId, Username = user.Username, Role = user.Role }, Token = token };
 
                 // Switch to 200 OK
                 result = Ok(retUser);
@@ -49,22 +58,42 @@ namespace Capstone.Controllers
         [HttpPost("/register")]
         public IActionResult Register(RegisterUser userParam)
         {
-            IActionResult result;
+            // Default generic error message
+            const string ErrorMessage = "An error occurred and user was not created.";
 
-            User existingUser = userDao.GetUser(userParam.Username);
-            if (existingUser != null)
+            IActionResult result = BadRequest(new { message = ErrorMessage });
+
+            // is username already taken?
+            try
             {
-                return Conflict(new { message = "Username already taken. Please choose a different username." });
+                User existingUser = userDao.GetUserByUsername(userParam.Username);
+                if (existingUser != null)
+                {
+                    return Conflict(new { message = "Username already taken. Please choose a different username." });
+                }
+            }
+            catch (DaoException)
+            {
+                return StatusCode(500, ErrorMessage);
             }
 
-            User user = userDao.AddUser(userParam.Username, userParam.Password, userParam.Role);
-            if (user != null)
+            // create new user
+            User newUser;
+            try
             {
-                result = Created(user.Username, null); //values aren't read on client
+                newUser = userDao.CreateUser(userParam.Username, userParam.Password, userParam.Role);
             }
-            else
+            catch (DaoException)
             {
-                result = BadRequest(new { message = "An error occurred and user was not created." });
+                return StatusCode(500, ErrorMessage);
+            }
+
+            if (newUser != null)
+            {
+                // Create a ReturnUser object to return to the client
+                ReturnUser returnUser = new ReturnUser() { UserId = newUser.UserId, Username = newUser.Username, Role = newUser.Role };
+
+                result = Created("/login", returnUser);
             }
 
             return result;
